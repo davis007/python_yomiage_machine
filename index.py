@@ -32,8 +32,8 @@ HTML_TEMPLATE = """
   <form method=\"POST\">
     <label for=\"text\">テキスト:</label><br>
     <textarea name=\"text\">{{ text or '' }}</textarea><br>
-    <label for=\"speed\">速度: {{ speed or 1.0 }}</label><br>
-    <input type=\"range\" name=\"speed\" min=\"0.5\" max=\"2.0\" step=\"0.1\" value=\"{{ speed or 1.0 }}\"><br>
+    <label for=\"speed\">速度: <span id=\"speedValue\">{{ speed or 1.0 }}</span></label><br>
+    <input type=\"range\" name=\"speed\" min=\"0.5\" max=\"2.0\" step=\"0.1\" value=\"{{ speed or 1.0 }}\" oninput=\"document.getElementById('speedValue').innerText = this.value\"><br>
     <button class=\"button\" type=\"submit\">▶ 読み上げる</button>
   </form>
   {% if wav_file %}
@@ -64,19 +64,26 @@ def index():
             tmp_wav = os.path.join(TMP_DIR, f"{uid}_{i}.wav")
             with open(tmp_txt, "w", encoding="utf-8") as f:
                 f.write(chunk)
-            subprocess.call([
-                "open_jtalk",
-                "-x", DICT_PATH,
-                "-m", VOICE_PATH,
-                "-r", str(speed),
-                "-ow", tmp_wav,
-                tmp_txt
-            ])
-            part_files.append(tmp_wav)
+            try:
+                subprocess.run([
+                    "open_jtalk",
+                    "-x", DICT_PATH,
+                    "-m", VOICE_PATH,
+                    "-r", str(speed),
+                    "-jm", "0.5",  # モーラ長変化の抑制（間延び防止）
+                    "-jf", "0.5",  # ピッチ変化の抑制（抑揚を自然に）
+                    "-ow", tmp_wav,
+                    tmp_txt
+                ], check=True)
+                if os.path.exists(tmp_wav) and os.path.getsize(tmp_wav) > 1024:
+                    part_files.append(tmp_wav)
+            except subprocess.CalledProcessError as e:
+                print(f"Error generating wav for chunk {i}:", e)
 
         output_path = os.path.join(TMP_DIR, f"{uid}_combined.wav")
-        subprocess.call(["sox"] + part_files + [output_path])
-        wav_file = os.path.basename(output_path)
+        if part_files:
+            subprocess.run(["sox"] + part_files + [output_path], check=True)
+            wav_file = os.path.basename(output_path)
 
     return render_template_string(HTML_TEMPLATE, wav_file=wav_file, text=text, speed=speed)
 
@@ -86,4 +93,4 @@ def audio(filename):
     return send_file(path, mimetype="audio/wav")
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5001)
